@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Voice Finger Counter</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background: #1a1a1a; color: white; margin: 0; padding: 20px; }
+        .main-layout { display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; }
+        .video-container { position: relative; border: 4px solid #444; border-radius: 15px; overflow: hidden; background: #000; width: 640px; height: 480px; }
+        #output_canvas { position: absolute; left: 0; top: 0; }
+        #counter-display { font-size: 100px; color: #00ffcc; font-weight: bold; margin: 10px 0; text-shadow: 0 0 20px rgba(0,255,204,0.5); }
+        
+        .sidebar { background: #2d2d2d; padding: 20px; border-radius: 15px; min-width: 200px; max-height: 480px; overflow-y: auto; }
+        .btn-reset { background: #ff4757; color: white; border: none; padding: 12px 25px; font-size: 16px; border-radius: 8px; cursor: pointer; transition: 0.3s; margin-bottom: 15px; }
+        .btn-reset:hover { background: #ff6b81; transform: scale(1.05); }
+        
+        ul { list-style: none; padding: 0; text-align: left; }
+        li { background: #3d3d3d; padding: 8px 12px; margin-bottom: 5px; border-left: 4px solid #00ffcc; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+    <h1>🖐️ AI Finger Counter</h1>
+    <p>Show your hand to the camera. It will count and speak!</p>
+
+    <div class="main-layout">
+        <div class="video-container">
+            <video id="input_video" style="display:none;"></video>
+            <canvas id="output_canvas" width="640px" height="480px"></canvas>
+        </div>
+
+        <div class="sidebar">
+            <div id="counter-display">0</div>
+            <button class="btn-reset" onclick="resetLogs()">Clear History</button>
+            <h3>Detection Log</h3>
+            <ul id="log-list"></ul>
+        </div>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const counterDisplay = document.getElementById('counter-display');
+        const logList = document.getElementById('log-list');
+
+        let lastCount = -1;
+        let detectionTimeout = null;
+
+        // Function to Speak
+        function speak(text) {
+            window.speechSynthesis.cancel();
+            const msg = new SpeechSynthesisUtterance(text);
+            msg.rate = 1.1;
+            window.speechSynthesis.speak(msg);
+        }
+
+        // Add to the visual list
+        function addToLog(num) {
+            const li = document.createElement('li');
+            const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            li.innerHTML = `<strong>Count: ${num}</strong> <small style="float:right">${time}</small>`;
+            logList.prepend(li);
+        }
+
+        function resetLogs() {
+            logList.innerHTML = '';
+            counterDisplay.innerText = '0';
+            lastCount = -1;
+        }
+
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            let currentFingers = 0;
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00ffcc', lineWidth: 4});
+                    drawLandmarks(canvasCtx, landmarks, {color: '#ff4757', lineWidth: 1, radius: 3});
+
+                    // Points for Fingers (Index, Middle, Ring, Pinky)
+                    const tips = [8, 12, 16, 20];
+                    const pips = [6, 10, 14, 18];
+                    tips.forEach((tip, i) => {
+                        if (landmarks[tip].y < landmarks[pips[i]].y) currentFingers++;
+                    });
+
+                    // Thumb Logic (Simple X-axis check)
+                    // Check distance between thumb tip (4) and index finger base (5)
+                    const thumbDistance = Math.abs(landmarks[4].x - landmarks[5].x);
+                    if (thumbDistance > 0.08) currentFingers++;
+                }
+
+                counterDisplay.innerText = currentFingers;
+
+                // Only trigger if the count is stable and different
+                if (currentFingers !== lastCount) {
+                    clearTimeout(detectionTimeout);
+                    // Wait 300ms of stability before speaking/logging
+                    detectionTimeout = setTimeout(() => {
+                        speak(currentFingers);
+                        addToLog(currentFingers);
+                        lastCount = currentFingers;
+                    }, 300);
+                }
+            }
+            canvasCtx.restore();
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
+        camera.start();
+    </script>
+</body>
+</html>
